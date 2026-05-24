@@ -1,0 +1,1 @@
+{"tfjsVersion":"1.7.4","tmVersion":"2.4.14","packageVersion":"0.8.4-alpha2","packageName":"@teachablemachine/image","timeStamp":"2026-05-23T16:12:21.299Z","userMetadata":{},"modelName":"Mi modelo big data","labels":["Adulto de pie","Adulto en el suelo","Adulto sentado","Adulto acostado","No se ve adulto"],"imageSize":224}
