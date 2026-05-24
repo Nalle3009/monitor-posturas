@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monitor de Posturas y Prevención de Accidentes</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.10.0/tabler-icons.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js"></script>
+  <style>
+    :root {
+      --beige: #F5F0E8; --beige-dark: #E8DFC8;
+      --olive: #6B7C3F; --olive-light: #8A9E52; --olive-dark: #4A5828; --olive-bg: #EEF2E6;
+      --alert-red: #C0392B; --alert-red-bg: #FDECEA;
+      --text-dark: #2C2C1A; --text-mid: #5A5A3A; --text-light: #8A8A6A;
+      --white: #FDFCF8; --border: #C8C0A0; --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--beige); min-height: 100vh; color: var(--text-dark); }
+
+    .header { background: var(--olive-dark); color: var(--beige); padding: 1rem 1.5rem; display: flex; align-items: center; gap: 14px; border-bottom: 4px solid var(--olive-light); position: sticky; top: 0; z-index: 100; }
+    .header .logo { width: 48px; height: 48px; background: var(--olive-light); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--beige); flex-shrink: 0; }
+    .header h1 { font-size: 18px; font-weight: 600; line-height: 1.2; }
+    .header p  { font-size: 12px; color: #A8C070; margin-top: 3px; }
+
+    .main { max-width: 960px; margin: 0 auto; padding: 1.25rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+    .panel { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .panel-header { background: var(--olive-bg); border-bottom: 1px solid var(--border); padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--olive-dark); display: flex; align-items: center; gap: 8px; }
+    .panel-header i { font-size: 16px; }
+    .panel-body { padding: 14px; }
+
+    .video-container { width: 100%; aspect-ratio: 4/3; background: #1A1A0A; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    #webcam-container { width: 100%; height: 100%; position: relative; }
+    #webcam-container canvas, #webcam-container video { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 8px; }
+    .video-placeholder { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #888870; }
+    .video-placeholder i { font-size: 44px; color: #555540; }
+    .video-placeholder p { font-size: 13px; }
+
+    .btn-start { margin-top: 12px; width: 100%; background: var(--olive); color: var(--beige); border: none; border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s, transform 0.1s; }
+    .btn-start:hover { background: var(--olive-dark); }
+    .btn-start:active { transform: scale(0.98); }
+    .btn-start:disabled { background: #A0A080; cursor: not-allowed; }
+    .btn-stop { margin-top: 8px; width: 100%; background: transparent; color: var(--alert-red); border: 1px solid var(--alert-red); border-radius: 8px; padding: 10px; font-size: 13px; cursor: pointer; display: none; align-items: center; justify-content: center; gap: 6px; transition: background 0.2s; }
+    .btn-stop:hover { background: var(--alert-red-bg); }
+
+    .status-badge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 12px; background: var(--beige-dark); color: var(--text-mid); }
+    .status-badge.active { background: #DFF0D8; color: #3A6A1A; }
+    .status-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status-badge.active .dot { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    .pred-list { display: flex; flex-direction: column; gap: 9px; }
+    .pred-item { display: flex; align-items: center; gap: 8px; }
+    .pred-label { width: 135px; font-size: 12px; color: var(--text-mid); flex-shrink: 0; display: flex; align-items: center; gap: 5px; }
+    .pred-label i { font-size: 14px; color: var(--olive); }
+    .pred-bar-bg { flex: 1; height: 11px; background: var(--beige-dark); border-radius: 6px; overflow: hidden; }
+    .pred-bar { height: 100%; border-radius: 6px; background: var(--olive-light); transition: width 0.3s ease; width: 0%; }
+    .pred-bar.danger { background: var(--alert-red); }
+    .pred-pct { width: 36px; font-size: 12px; text-align: right; color: var(--text-dark); font-weight: 600; }
+
+    .current-class { background: var(--olive-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; text-align: center; }
+    .current-class .class-icon { font-size: 34px; color: var(--olive); }
+    .current-class .class-name { font-size: 14px; font-weight: 600; color: var(--olive-dark); margin-top: 4px; }
+    .current-class .class-conf { font-size: 11px; color: var(--text-light); }
+
+    .alert-box { background: var(--alert-red-bg); border: 2px solid var(--alert-red); border-radius: 10px; padding: 18px; display: none; flex-direction: column; align-items: center; gap: 8px; text-align: center; animation: flash 0.9s infinite; }
+    @keyframes flash { 0%,100%{border-color:var(--alert-red);background:var(--alert-red-bg)} 50%{border-color:#FF6B6B;background:#FFF0EE} }
+    .alert-box.visible { display: flex; }
+    .alert-box i  { font-size: 36px; color: var(--alert-red); }
+    .alert-box h3 { font-size: 16px; color: var(--alert-red); font-weight: 700; }
+    .alert-box p  { font-size: 13px; color: #8B2020; line-height: 1.5; }
+    .alert-box .timer { font-size: 12px; color: #8B2020; font-style: italic; margin-top: 4px; }
+    .btn-dismiss { margin-top: 6px; background: var(--alert-red); color: white; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-dismiss:hover { background: #9B2B1E; }
+    .no-alert { text-align: center; padding: 12px 0; color: var(--text-light); font-size: 13px; }
+    .no-alert i { font-size: 26px; display: block; margin-bottom: 6px; color: var(--olive-light); }
+
+    .config-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--beige-dark); font-size: 13px; }
+    .config-row:last-of-type { border-bottom: none; }
+    .config-row label { color: var(--text-mid); display: flex; align-items: center; gap: 7px; }
+    .config-row label i { font-size: 15px; color: var(--olive); }
+    .toggle { width: 38px; height: 22px; background: var(--border); border-radius: 11px; border: none; cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0; }
+    .toggle.on { background: var(--olive); }
+    .toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: white; border-radius: 50%; transition: left 0.2s; }
+    .toggle.on::after { left: 19px; }
+
+    .threshold-row { display: flex; align-items: center; gap: 9px; font-size: 12px; padding: 9px 0; border-bottom: 1px solid var(--beige-dark); }
+    .threshold-row:last-child { border-bottom: none; }
+    .threshold-row label { color: var(--text-mid); width: 110px; flex-shrink: 0; }
+    .threshold-row input[type=range] { flex: 1; accent-color: var(--olive); }
+    .threshold-row span { width: 36px; text-align: right; color: var(--text-dark); font-weight: 600; }
+    .hint { font-size: 11px; color: var(--text-light); margin-top: 8px; line-height: 1.5; }
+
+    .history-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+    .history-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; padding: 7px 10px; background: var(--beige); border-radius: 6px; border-left: 3px solid var(--olive-light); }
+    .history-item.alert-ev { border-left-color: var(--alert-red); }
+    .history-item i { font-size: 13px; color: var(--text-light); flex-shrink: 0; margin-top: 1px; }
+    .history-item .time { color: var(--text-light); flex-shrink: 0; }
+    .history-item .desc { color: var(--text-dark); flex: 1; }
+
+    .loading-overlay { position: fixed; inset: 0; background: rgba(74,88,40,0.93); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 999; color: #EEF2E6; }
+    .loading-overlay i  { font-size: 52px; animation: spin 1s linear infinite; }
+    .loading-overlay h2 { font-size: 20px; font-weight: 600; }
+    .loading-overlay p  { font-size: 13px; color: #A8C070; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 640px) { .main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading-overlay">
+  <i class="ti ti-loader-2"></i>
+  <h2>Cargando modelo...</h2>
+  <p>Conectando con Teachable Machine</p>
+</div>
+
+<div class="header">
+  <div class="logo"><i class="ti ti-shield-heart"></i></div>
+  <div>
+    <h1>Monitor de Posturas y Prevención de Accidentes</h1>
+    <p>Detección en tiempo real · Adultos mayores</p>
+  </div>
+</div>
+
+<div class="main">
+
+  <div class="panel">
+    <div class="panel-header"><i class="ti ti-video"></i> Cámara en vivo</div>
+    <div class="panel-body">
+      <div class="video-container">
+        <div id="webcam-container">
+          <div class="video-placeholder" id="placeholder">
+            <i class="ti ti-camera-off"></i>
+            <p>Iniciando cámara...</p>
+          </div>
+        </div>
+      </div>
+      <button class="btn-start" id="btn-start" onclick="startMonitor()">
+        <i class="ti ti-player-play"></i> Iniciar monitoreo
+      </button>
+      <button class="btn-stop" id="btn-stop" onclick="stopMonitor()">
+        <i class="ti ti-player-stop"></i> Detener monitoreo
+      </button>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:1rem;">
+    <div class="panel">
+      <div class="panel-header"><i class="ti ti-activity"></i> Predicciones en tiempo real</div>
+      <div class="panel-body">
+        <span class="status-badge" id="status-badge">
+          <span class="dot"></span><span id="status-text">Cargando...</span>
+        </span>
+        <div class="pred-list">
+          <div class="pred-item"><div class="pred-label"><i class="ti ti-standing-desk"></i> Adulto de pie</div><div class="pred-bar-bg"><div class="pred-bar" id="bar-0"></div></div><div class="pred-pct" id="pct-0">0%</div></div>
+          <div class="pred-item"><div class="pred-label"><i class="ti ti-alert-triangle"></i> En el suelo</div><div class="pred-bar-bg"><div class="pred-bar danger" id="bar-1"></div></div><div class="pred-pct" id="pct-1">0%</div></div>
+          <div class="pred-item"><div class="pred-label"><i class="ti ti-armchair"></i> Sentado</div><div class="pred-bar-bg"><div class="pred-bar" id="bar-2"></div></div><div class="pred-pct" id="pct-2">0%</div></div>
+          <div class="pred-item"><div class="pred-label"><i class="ti ti-bed"></i> Acostado</div><div class="pred-bar-bg"><div class="pred-bar" id="bar-3"></div></div><div class="pred-pct" id="pct-3">0%</div></div>
+          <div class="pred-item"><div class="pred-label"><i class="ti ti-eye-off"></i> No se ve adulto</div><div class="pred-bar-bg"><div class="pred-bar" id="bar-4"></div></div><div class="pred-pct" id="pct-4">0%</div></div>
+        </div>
+        <div class="current-class">
+          <div class="class-icon"><i class="ti ti-scan" id="cur-icon"></i></div>
+          <div class="class-name" id="cur-name">Esperando detección...</div>
+          <div class="class-conf" id="cur-conf"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><i class="ti ti-bell-ringing"></i> Alerta de accidente</div>
+      <div class="panel-body">
+        <div class="alert-box" id="alert-box">
+          <i class="ti ti-alert-octagon"></i>
+          <h3>¡Posible caída detectada!</h3>
+          <p>Se detectó a un adulto mayor en el suelo.<br>Verificar de inmediato.</p>
+          <div class="timer" id="alert-timer"></div>
+          <button class="btn-dismiss" onclick="dismissAlert()"><i class="ti ti-check"></i> Confirmar revisión</button>
+        </div>
+        <div class="no-alert" id="no-alert">
+          <i class="ti ti-shield-check"></i>Sin alertas activas
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><i class="ti ti-settings"></i> Configuración</div>
+    <div class="panel-body">
+      <div class="config-row"><label><i class="ti ti-volume"></i> Sonido de alerta</label><button class="toggle on" id="toggle-sound" onclick="toggleOption('sound')"></button></div>
+      <div class="config-row"><label><i class="ti ti-history"></i> Registro de eventos</label><button class="toggle on" id="toggle-log" onclick="toggleOption('log')"></button></div>
+      <div class="config-row"><label><i class="ti ti-repeat"></i> Repetir sonido</label><button class="toggle on" id="toggle-repeat" onclick="toggleOption('repeat')"></button></div>
+      <div class="threshold-row"><label>Umbral de alerta</label><input type="range" min="50" max="99" value="80" step="1" id="threshold" oninput="document.getElementById('threshold-val').textContent=this.value+'%'"><span id="threshold-val">80%</span></div>
+      <div class="threshold-row"><label>Frames de confirmación</label><input type="range" min="1" max="15" value="5" step="1" id="confirm-frames" oninput="document.getElementById('confirm-val').textContent=this.value"><span id="confirm-val">5</span></div>
+      <div class="threshold-row"><label>Intervalo de sonido (seg)</label><input type="range" min="5" max="60" value="10" step="5" id="sound-interval" oninput="document.getElementById('interval-val').textContent=this.value+'s'"><span id="interval-val">10s</span></div>
+      <p class="hint">La alerta se activa cuando el modelo supera el umbral durante N frames seguidos. El sonido se repite según el intervalo configurado.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><i class="ti ti-list"></i> Registro de eventos</div>
+    <div class="panel-body">
+      <div class="history-list" id="history-list">
+        <div style="text-align:center;color:var(--text-light);font-size:12px;padding:10px 0;">El registro aparecerá aquí al iniciar.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const MODEL_URL = 'https://teachablemachine.withgoogle.com/models/SOaQ5VKd-/';
+  const classNames = ['Adulto de pie','En el suelo','Sentado','Acostado','No se ve adulto'];
+  const classIcons = ['ti-standing-desk','ti-alert-triangle','ti-armchair','ti-bed','ti-eye-off'];
+
+  let model, webcam, isRunning=false, alertActive=false, alertStart=null, alertTimer=null;
+  let confirmCount=0, lastBeep=0, audioCtx=null;
+  let soundEnabled=true, logEnabled=true, repeatEnabled=true;
+
+  function getThreshold()     { return parseInt(document.getElementById('threshold').value)/100; }
+  function getConfirmFrames() { return parseInt(document.getElementById('confirm-frames').value); }
+  function getSoundInterval() { return parseInt(document.getElementById('sound-interval').value)*1000; }
+
+  function toggleOption(opt) {
+    if(opt==='sound') { soundEnabled=!soundEnabled; document.getElementById('toggle-sound').classList.toggle('on',soundEnabled); }
+    if(opt==='log')   { logEnabled=!logEnabled;     document.getElementById('toggle-log').classList.toggle('on',logEnabled); }
+    if(opt==='repeat'){ repeatEnabled=!repeatEnabled; document.getElementById('toggle-repeat').classList.toggle('on',repeatEnabled); }
+  }
+
+  function beep() {
+    if(!soundEnabled) return;
+    try {
+      if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+      [[880,0],[660,0.3],[880,0.55],[660,0.85],[880,1.1],[440,1.4]].forEach(([freq,t])=>{
+        const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+        osc.connect(g); g.connect(audioCtx.destination);
+        osc.frequency.value=freq; osc.type='sine';
+        g.gain.setValueAtTime(0.45,audioCtx.currentTime+t);
+        g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+t+0.28);
+        osc.start(audioCtx.currentTime+t); osc.stop(audioCtx.currentTime+t+0.35);
+      });
+    } catch(e){}
+  }
+
+  function addHistory(text,isAlert) {
+    if(!logEnabled) return;
+    const list=document.getElementById('history-list');
+    if(list.children.length===1&&list.children[0].style.textAlign==='center') list.innerHTML='';
+    const time=new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const item=document.createElement('div');
+    item.className='history-item'+(isAlert?' alert-ev':'');
+    item.innerHTML=`<i class="ti ${isAlert?'ti-alert-triangle':'ti-check'}"></i><span class="time">${time}</span><span class="desc">${text}</span>`;
+    list.insertBefore(item,list.firstChild);
+    while(list.children.length>30) list.removeChild(list.lastChild);
+  }
+
+  function showAlert() {
+    if(alertActive) return;
+    alertActive=true; alertStart=Date.now(); lastBeep=Date.now();
+    document.getElementById('alert-box').classList.add('visible');
+    document.getElementById('no-alert').style.display='none';
+    beep();
+    addHistory('ALERTA: Adulto mayor en el suelo detectado',true);
+    alertTimer=setInterval(()=>{
+      const sec=Math.floor((Date.now()-alertStart)/1000);
+      const m=String(Math.floor(sec/60)).padStart(2,'0'), s=String(sec%60).padStart(2,'0');
+      document.getElementById('alert-timer').textContent='Tiempo desde detección: '+m+':'+s;
+      if(repeatEnabled&&(Date.now()-lastBeep)>=getSoundInterval()){beep();lastBeep=Date.now();}
+    },1000);
+  }
+
+  function hideAlert() {
+    if(!alertActive) return;
+    alertActive=false;
+    document.getElementById('alert-box').classList.remove('visible');
+    document.getElementById('no-alert').style.display='block';
+    clearInterval(alertTimer);
+    document.getElementById('alert-timer').textContent='';
+  }
+
+  function dismissAlert() { hideAlert(); addHistory('Alerta revisada manualmente',false); confirmCount=0; }
+
+  async function startMonitor() {
+    const btn=document.getElementById('btn-start');
+    btn.disabled=true;
+    btn.innerHTML='<i class="ti ti-loader"></i> Cargando...';
+    try {
+      model=await tmImage.load(MODEL_URL+'model.json',MODEL_URL+'metadata.json');
+      webcam=new tmImage.Webcam(320,320,true);
+      await webcam.setup();
+      await webcam.play();
+      document.getElementById('placeholder').style.display='none';
+      document.getElementById('webcam-container').appendChild(webcam.canvas);
+      isRunning=true;
+      document.getElementById('status-badge').classList.add('active');
+      document.getElementById('status-text').textContent='Monitoreando';
+      btn.style.display='none';
+      document.getElementById('btn-stop').style.display='flex';
+      document.getElementById('loading-overlay').style.display='none';
+      addHistory('Monitor iniciado correctamente',false);
+      window.requestAnimationFrame(loop);
+    } catch(e) {
+      document.getElementById('loading-overlay').style.display='none';
+      btn.disabled=false;
+      btn.innerHTML='<i class="ti ti-player-play"></i> Iniciar monitoreo';
+      document.getElementById('status-text').textContent='Error al cargar';
+      alert('No se pudo cargar el modelo o la cámara.\n\nAsegúrate de:\n• Estar en localhost (Live Server)\n• Dar permiso a la cámara cuando el navegador lo pida\n• Tener conexión a internet\n\nError: '+e.message);
+    }
+  }
+
+  async function stopMonitor() {
+    isRunning=false;
+    if(webcam) webcam.stop();
+    document.getElementById('webcam-container').querySelectorAll('canvas').forEach(c=>c.remove());
+    document.getElementById('placeholder').style.display='flex';
+    document.getElementById('status-badge').classList.remove('active');
+    document.getElementById('status-text').textContent='Inactivo';
+    const btn=document.getElementById('btn-start');
+    btn.style.display='flex'; btn.disabled=false;
+    btn.innerHTML='<i class="ti ti-player-play"></i> Iniciar monitoreo';
+    document.getElementById('btn-stop').style.display='none';
+    hideAlert(); confirmCount=0;
+    addHistory('Monitor detenido',false);
+  }
+
+  async function loop() {
+    if(!isRunning) return;
+    webcam.update();
+    const preds=await model.predict(webcam.canvas);
+    let topIdx=0, topProb=0;
+    preds.forEach((p,i)=>{
+      const pct=Math.round(p.probability*100);
+      document.getElementById('bar-'+i).style.width=pct+'%';
+      document.getElementById('pct-'+i).textContent=pct+'%';
+      if(p.probability>topProb){topProb=p.probability;topIdx=i;}
+    });
+    document.getElementById('cur-icon').className='ti '+classIcons[topIdx];
+    document.getElementById('cur-name').textContent=classNames[topIdx];
+    document.getElementById('cur-conf').textContent=Math.round(topProb*100)+'% de confianza';
+    if(topIdx===1&&topProb>=getThreshold()){
+      confirmCount++;
+      if(confirmCount>=getConfirmFrames()) showAlert();
+    } else if(topIdx!==1){
+      if(confirmCount>0&&alertActive){hideAlert();addHistory('Situación normalizada',false);}
+      confirmCount=0;
+    }
+    window.requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('load',()=>startMonitor());
+</script>
+</body>
+</html>
